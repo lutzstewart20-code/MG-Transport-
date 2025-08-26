@@ -1,287 +1,266 @@
 <?php
-session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
-require_once '../includes/notifications.php';
+/**
+ * Enhanced Notifications Helper Functions
+ * Handles creating, displaying, and managing user notifications
+ * Extends the basic notification functions in functions.php
+ */
 
-// Check if user is admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-    header('Location: ../login.php');
-    exit();
+/**
+ * Create a new enhanced notification for a user with related data
+ */
+function createEnhancedNotification($conn, $user_id, $title, $message, $type = 'info', $related_id = null, $related_type = null) {
+    // First, ensure the table has the required columns
+    $check_columns = mysqli_query($conn, "SHOW COLUMNS FROM notifications LIKE 'related_id'");
+    if (mysqli_num_rows($check_columns) == 0) {
+        // Add the missing columns
+        mysqli_query($conn, "ALTER TABLE notifications ADD COLUMN related_id INT NULL");
+        mysqli_query($conn, "ALTER TABLE notifications ADD COLUMN related_type VARCHAR(50) NULL");
+    }
+    
+    $query = "INSERT INTO notifications (user_id, title, message, type, related_id, related_type) VALUES (?, ?, ?, ?, ?, ?)";
+    $stmt = mysqli_prepare($conn, $query);
+    
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "isssss", $user_id, $title, $message, $type, $related_id, $related_type);
+        if (mysqli_stmt_execute($stmt)) {
+            return true;
+        }
+    }
+    
+    // Fallback to basic notification if enhanced fails
+    $fallback_query = "INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)";
+    $fallback_stmt = mysqli_prepare($conn, $fallback_query);
+    
+    if ($fallback_stmt) {
+        mysqli_stmt_bind_param($fallback_stmt, "isss", $user_id, $title, $message, $type);
+        return mysqli_stmt_execute($fallback_stmt);
+    }
+    
+    return false;
 }
 
-// Handle actions
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    $action = $_POST['action'];
+/**
+ * Get unread notifications for a user
+ */
+function getUnreadNotificationsList($conn, $user_id, $limit = 10) {
+    $query = "SELECT * FROM notifications WHERE user_id = ? AND is_read = FALSE ORDER BY created_at DESC LIMIT ?";
+    $stmt = mysqli_prepare($conn, $query);
     
-    if ($action === 'delete' && isset($_POST['notification_id'])) {
-        $notification_id = (int)$_POST['notification_id'];
-        $delete_query = "DELETE FROM notifications WHERE id = ?";
-        $stmt = mysqli_prepare($conn, $delete_query);
-        mysqli_stmt_bind_param($stmt, "i", $notification_id);
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "ii", $user_id, $limit);
         mysqli_stmt_execute($stmt);
-    } elseif ($action === 'cleanup') {
-        cleanupOldNotifications($conn, 30); // Clean up notifications older than 30 days
+        $result = mysqli_stmt_get_result($stmt);
+        
+        $notifications = [];
+        while ($row = mysqli_fetch_assoc($result)) {
+            $notifications[] = $row;
+        }
+        
+        return $notifications;
     }
     
-    // Redirect to prevent form resubmission
-    header('Location: notifications.php');
-    exit();
+    return [];
 }
 
-// Get all notifications with user details
-$notifications_query = "
-    SELECT n.*, u.username, u.email, u.first_name, u.last_name 
-    FROM notifications n 
-    JOIN users u ON n.user_id = u.id 
-    ORDER BY n.created_at DESC
-";
-$notifications_result = mysqli_query($conn, $notifications_query);
-
-// Get statistics
-$total_notifications = mysqli_num_rows($notifications_result);
-$unread_count = 0;
-$type_counts = ['info' => 0, 'success' => 0, 'warning' => 0, 'error' => 0];
-
-if ($notifications_result) {
-    $notifications = [];
-    while ($row = mysqli_fetch_assoc($notifications_result)) {
-        $notifications[] = $row;
-        if (!$row['is_read']) $unread_count++;
-        $type_counts[$row['type']]++;
+/**
+ * Get all notifications for a user
+ */
+function getAllNotificationsList($conn, $user_id, $limit = 20) {
+    $query = "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?";
+    $stmt = mysqli_prepare($conn, $query);
+    
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "ii", $user_id, $limit);
+        mysqli_stmt_execute($stmt);
+        $result = mysqli_stmt_get_result($stmt);
+        
+        $notifications = [];
+        while ($row = mysqli_fetch_assoc($result)) {
+            $notifications[] = $row;
+        }
+        
+        return $notifications;
     }
+    
+    return [];
+}
+
+/**
+ * Mark a notification as read
+ */
+function markNotificationAsReadById($conn, $notification_id, $user_id) {
+    $query = "UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?";
+    $stmt = mysqli_prepare($conn, $query);
+    
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "ii", $notification_id, $user_id);
+        return mysqli_stmt_execute($stmt);
+    }
+    
+    return false;
+}
+
+/**
+ * Mark all notifications as read for a user
+ */
+function markAllNotificationsAsReadForUser($conn, $user_id) {
+    $query = "UPDATE notifications SET is_read = TRUE WHERE user_id = ?";
+    $stmt = mysqli_prepare($conn, $query);
+    
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "i", $user_id);
+        return mysqli_stmt_execute($stmt);
+    }
+    
+    return false;
+}
+
+/**
+ * Get notification count for a user
+ */
+function getNotificationCountForUser($conn, $user_id, $unread_only = true) {
+    $query = $unread_only 
+        ? "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = FALSE"
+        : "SELECT COUNT(*) as count FROM notifications WHERE user_id = ?";
+    
+    $stmt = mysqli_prepare($conn, $query);
+    
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "i", $user_id);
+        mysqli_stmt_execute($stmt);
+        $result = mysqli_stmt_get_result($stmt);
+        $row = mysqli_fetch_assoc($result);
+        
+        return $row['count'] ?? 0;
+    }
+    
+    return 0;
+}
+
+/**
+ * Delete old notifications (older than specified days)
+ */
+function cleanupOldNotifications($conn, $days = 30) {
+    $query = "DELETE FROM notifications WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)";
+    $stmt = mysqli_prepare($conn, $query);
+    
+    if ($stmt) {
+        mysqli_stmt_bind_param($stmt, "i", $days);
+        return mysqli_stmt_execute($stmt);
+    }
+    
+    return false;
+}
+
+/**
+ * Create booking-related notifications
+ */
+function createBookingNotification($conn, $user_id, $booking_id, $action = 'created') {
+    $messages = [
+        'created' => [
+            'title' => 'Booking Request Submitted',
+            'message' => 'Your vehicle booking request has been submitted successfully and is waiting for admin confirmation.',
+            'type' => 'info'
+        ],
+        'confirmed' => [
+            'title' => 'Booking Confirmed',
+            'message' => 'Your vehicle booking has been confirmed by admin. You can now proceed with payment.',
+            'type' => 'success'
+        ],
+        'rejected' => [
+            'title' => 'Booking Rejected',
+            'message' => 'Your vehicle booking request has been rejected. Please contact admin for details.',
+            'type' => 'error'
+        ],
+        'cancelled' => [
+            'title' => 'Booking Cancelled',
+            'message' => 'Your vehicle booking has been cancelled.',
+            'type' => 'warning'
+        ]
+    ];
+    
+    if (isset($messages[$action])) {
+        $msg = $messages[$action];
+        return createEnhancedNotification($conn, $user_id, $msg['title'], $msg['message'], $msg['type'], $booking_id, 'booking');
+    }
+    
+    return false;
+}
+
+/**
+ * Create payment-related notifications
+ */
+function createPaymentNotification($conn, $user_id, $booking_id, $action = 'verified') {
+    $messages = [
+        'verified' => [
+            'title' => 'Payment Verified',
+            'message' => 'Your payment has been verified and your booking is now confirmed.',
+            'type' => 'success'
+        ],
+        'pending' => [
+            'title' => 'Payment Pending',
+            'message' => 'Your payment is pending verification. We will notify you once confirmed.',
+            'type' => 'info'
+        ],
+        'failed' => [
+            'title' => 'Payment Failed',
+            'message' => 'Your payment could not be processed. Please try again or contact support.',
+            'type' => 'error'
+        ]
+    ];
+    
+    if (isset($messages[$action])) {
+        $msg = $messages[$action];
+        return createEnhancedNotification($conn, $user_id, $msg['title'], $msg['message'], $msg['type'], $booking_id, 'payment');
+    }
+    
+    return false;
+}
+
+/**
+ * Create admin notifications for new bookings
+ */
+function createAdminBookingNotification($conn, $booking_id, $action = 'new_booking') {
+    // Get all admin users
+    $admin_query = "SELECT id FROM users WHERE role = 'admin'";
+    $admin_result = mysqli_query($conn, $admin_query);
+    
+    if (!$admin_result) {
+        return false;
+    }
+    
+    $messages = [
+        'new_booking' => [
+            'title' => 'New Booking Request',
+            'message' => 'A new vehicle booking request has been submitted and requires your review.',
+            'type' => 'info'
+        ],
+        'booking_confirmed' => [
+            'title' => 'Booking Confirmed',
+            'message' => 'A vehicle booking has been confirmed by admin.',
+            'type' => 'success'
+        ],
+        'booking_rejected' => [
+            'title' => 'Booking Rejected',
+            'message' => 'A vehicle booking request has been rejected.',
+            'type' => 'warning'
+        ]
+    ];
+    
+    if (!isset($messages[$action])) {
+        return false;
+    }
+    
+    $msg = $messages[$action];
+    $success_count = 0;
+    
+    // Create notification for each admin
+    while ($admin = mysqli_fetch_assoc($admin_result)) {
+        if (createEnhancedNotification($conn, $admin['id'], $msg['title'], $msg['message'], $msg['type'], $booking_id, 'admin_booking')) {
+            $success_count++;
+        }
+    }
+    
+    return $success_count > 0;
 }
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Notifications - Admin Panel</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <link href="../assets/css/admin.css" rel="stylesheet">
-    <style>
-        .notification-card {
-            border-left: 4px solid #dee2e6;
-            transition: all 0.3s ease;
-        }
-        
-        .notification-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        .notification-card.unread {
-            border-left-color: #007bff;
-            background-color: #f8f9fa;
-        }
-        
-        .notification-card.success {
-            border-left-color: #28a745;
-        }
-        
-        .notification-card.warning {
-            border-left-color: #ffc107;
-        }
-        
-        .notification-card.error {
-            border-left-color: #dc3545;
-        }
-        
-        .notification-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-        }
-        
-        .notification-icon.info {
-            background-color: #e3f2fd;
-            color: #1976d2;
-        }
-        
-        .notification-icon.success {
-            background-color: #e8f5e8;
-            color: #388e3c;
-        }
-        
-        .notification-icon.warning {
-            background-color: #fff8e1;
-            color: #f57c00;
-        }
-        
-        .notification-icon.error {
-            background-color: #ffebee;
-            color: #d32f2f;
-        }
-        
-        .stats-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 15px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        .stats-card h3 {
-            margin: 0;
-            font-size: 2rem;
-            font-weight: bold;
-        }
-        
-        .stats-card p {
-            margin: 0;
-            opacity: 0.9;
-        }
-    </style>
-</head>
-<body>
-    <?php include 'includes/header.php'; ?>
-    
-    <div class="container-fluid">
-        <div class="row">
-            <?php include 'includes/sidebar.php'; ?>
-            
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
-                <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-                    <h1 class="h2">
-                        <i class="fas fa-bell me-2 text-primary"></i>
-                        Manage Notifications
-                    </h1>
-                    <div class="btn-toolbar mb-2 mb-md-0">
-                        <form method="POST" class="d-inline me-2">
-                            <input type="hidden" name="action" value="cleanup">
-                            <button type="submit" class="btn btn-outline-warning" onclick="return confirm('This will delete notifications older than 30 days. Continue?')">
-                                <i class="fas fa-broom me-2"></i>Cleanup Old
-                            </button>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- Statistics Cards -->
-                <div class="row mb-4">
-                    <div class="col-md-3">
-                        <div class="stats-card">
-                            <h3><?php echo $total_notifications; ?></h3>
-                            <p>Total Notifications</p>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="stats-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
-                            <h3><?php echo $unread_count; ?></h3>
-                            <p>Unread</p>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
-                            <h3><?php echo $type_counts['info']; ?></h3>
-                            <p>Info</p>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="stats-card" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
-                            <h3><?php echo $type_counts['success']; ?></h3>
-                            <p>Success</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Notifications List -->
-                <?php if (empty($notifications)): ?>
-                    <div class="text-center py-5">
-                        <i class="fas fa-bell-slash fa-3x text-muted mb-3"></i>
-                        <h4 class="text-muted">No notifications found</h4>
-                        <p class="text-muted">The system doesn't have any notifications yet.</p>
-                    </div>
-                <?php else: ?>
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="mb-0">All Notifications</h5>
-                        </div>
-                        <div class="card-body p-0">
-                            <?php foreach ($notifications as $notification): ?>
-                                <div class="notification-card p-3 border-bottom <?php echo $notification['is_read'] ? '' : 'unread'; ?> <?php echo $notification['type']; ?>">
-                                    <div class="row align-items-start">
-                                        <div class="col-auto">
-                                            <div class="notification-icon <?php echo $notification['type']; ?>">
-                                                <?php
-                                                $icon_class = 'fas fa-info-circle';
-                                                switch ($notification['type']) {
-                                                    case 'success':
-                                                        $icon_class = 'fas fa-check-circle';
-                                                        break;
-                                                    case 'warning':
-                                                        $icon_class = 'fas fa-exclamation-triangle';
-                                                        break;
-                                                    case 'error':
-                                                        $icon_class = 'fas fa-times-circle';
-                                                        break;
-                                                }
-                                                ?>
-                                                <i class="<?php echo $icon_class; ?>"></i>
-                                            </div>
-                                        </div>
-                                        
-                                        <div class="col">
-                                            <div class="d-flex justify-content-between align-items-start">
-                                                <div class="flex-grow-1">
-                                                    <h6 class="mb-1">
-                                                        <?php echo htmlspecialchars($notification['title']); ?>
-                                                        <?php if (!$notification['is_read']): ?>
-                                                            <span class="badge bg-primary ms-2">New</span>
-                                                        <?php endif; ?>
-                                                    </h6>
-                                                    <p class="mb-2 text-muted">
-                                                        <?php echo htmlspecialchars($notification['message']); ?>
-                                                    </p>
-                                                    <div class="d-flex align-items-center text-muted small">
-                                                        <span class="me-3">
-                                                            <i class="fas fa-user me-1"></i>
-                                                            <?php echo htmlspecialchars($notification['first_name'] . ' ' . $notification['last_name']); ?>
-                                                            (<?php echo htmlspecialchars($notification['username']); ?>)
-                                                        </span>
-                                                        <span class="me-3">
-                                                            <i class="fas fa-clock me-1"></i>
-                                                            <?php echo date('M j, Y g:i A', strtotime($notification['created_at'])); ?>
-                                                        </span>
-                                                        <?php if ($notification['related_id'] && $notification['related_type']): ?>
-                                                            <span class="me-3">
-                                                                <i class="fas fa-link me-1"></i>
-                                                                <?php echo ucfirst($notification['related_type']); ?> #<?php echo $notification['related_id']; ?>
-                                                            </span>
-                                                        <?php endif; ?>
-                                                    </div>
-                                                </div>
-                                                
-                                                <div class="ms-3">
-                                                    <form method="POST" class="d-inline">
-                                                        <input type="hidden" name="action" value="delete">
-                                                        <input type="hidden" name="notification_id" value="<?php echo $notification['id']; ?>">
-                                                        <button type="submit" class="btn btn-sm btn-outline-danger" 
-                                                                onclick="return confirm('Are you sure you want to delete this notification?')"
-                                                                title="Delete notification">
-                                                            <i class="fas fa-trash"></i>
-                                                        </button>
-                                                    </form>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-                <?php endif; ?>
-            </main>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="../assets/js/admin.js"></script>
-</body>
-</html>
