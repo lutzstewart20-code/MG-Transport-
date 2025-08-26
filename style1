@@ -1,0 +1,17 @@
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: Arial, Helvetica, sans-serif;
+    list-style: none;
+}
+
+header {
+    background-color: #333;
+    background: 100%;
+    min-width: 100vh;
+    color: white;
+    background-size: cover;
+    padding: 10px 0;
+    text-align: center;
+}
