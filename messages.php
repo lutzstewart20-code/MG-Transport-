@@ -1,15 +1,15 @@
 <?php
 session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
+require_once 'config/database.php';
+require_once 'includes/functions.php';
 
-// Check if user is admin
-if (!isLoggedIn() || !isAdmin($conn)) {
-    header('Location: ../login.php');
+// Check if user is logged in
+if (!isLoggedIn()) {
+    header('Location: login.php');
     exit();
 }
 
-$admin_id = $_SESSION['user_id'];
+$user_id = $_SESSION['user_id'];
 
 // Handle new message submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $query = "INSERT INTO messages (sender_id, recipient_id, message, message_type) 
                      VALUES (?, ?, ?, 'text')";
             $stmt = mysqli_prepare($conn, $query);
-            mysqli_stmt_bind_param($stmt, "iis", $admin_id, $recipient_id, $message);
+            mysqli_stmt_bind_param($stmt, "iis", $user_id, $recipient_id, $message);
             
             if (mysqli_stmt_execute($stmt)) {
                 $success_message = "Message sent successfully!";
@@ -34,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     }
 }
 
-// Get all conversations for the admin
+// Get all conversations for the current user
 $conversations_query = "
 SELECT DISTINCT 
     CASE 
@@ -43,7 +43,6 @@ SELECT DISTINCT
     END as other_user_id,
     u.username as other_username,
     u.role as other_role,
-    u.email as other_email,
     (SELECT message FROM messages 
      WHERE (sender_id = ? AND recipient_id = other_user_id) 
         OR (sender_id = other_user_id AND recipient_id = ?)
@@ -60,7 +59,7 @@ WHERE (m.sender_id = ? OR m.recipient_id = ?) AND u.id != ?
 ORDER BY last_message_time DESC";
 
 $stmt = mysqli_prepare($conn, $conversations_query);
-mysqli_stmt_bind_param($stmt, "iiiiiiiii", $admin_id, $admin_id, $admin_id, $admin_id, $admin_id, $admin_id, $admin_id, $admin_id, $admin_id);
+mysqli_stmt_bind_param($stmt, "iiiiiiiii", $user_id, $user_id, $user_id, $user_id, $user_id, $user_id, $user_id, $user_id, $user_id);
 mysqli_stmt_execute($stmt);
 $result = mysqli_stmt_get_result($stmt);
 $conversations = mysqli_fetch_all($result, MYSQLI_ASSOC);
@@ -79,7 +78,7 @@ if ($selected_user_id > 0) {
     ORDER BY m.created_at ASC";
     
     $stmt = mysqli_prepare($conn, $messages_query);
-    mysqli_stmt_bind_param($stmt, "iiii", $admin_id, $selected_user_id, $selected_user_id, $admin_id);
+    mysqli_stmt_bind_param($stmt, "iiii", $user_id, $selected_user_id, $selected_user_id, $user_id);
     mysqli_stmt_execute($stmt);
     $result = mysqli_stmt_get_result($stmt);
     $messages = mysqli_fetch_all($result, MYSQLI_ASSOC);
@@ -88,14 +87,14 @@ if ($selected_user_id > 0) {
     $update_query = "UPDATE messages SET is_read = 1 
                      WHERE sender_id = ? AND recipient_id = ? AND is_read = 0";
     $stmt = mysqli_prepare($conn, $update_query);
-    mysqli_stmt_bind_param($stmt, "ii", $selected_user_id, $admin_id);
+    mysqli_stmt_bind_param($stmt, "ii", $selected_user_id, $user_id);
     mysqli_stmt_execute($stmt);
 }
 
-// Get all users for new conversation
-$users_query = "SELECT id, username, role, email FROM users WHERE role != 'admin' ORDER BY username";
-$users_result = mysqli_query($conn, $users_query);
-$users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
+// Get all admins for new conversation
+$admins_query = "SELECT id, username, role FROM users WHERE role = 'admin' ORDER BY username";
+$admins_result = mysqli_query($conn, $admins_query);
+$admins = mysqli_fetch_all($admins_result, MYSQLI_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -103,10 +102,10 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Messages - MG Transport Services</title>
+    <title>Messages - MG Transport Services</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <link href="../assets/css/style.css" rel="stylesheet">
+    <link href="assets/css/style.css" rel="stylesheet">
     <style>
         .chat-container {
             height: 600px;
@@ -175,7 +174,7 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
         }
         
         .message.sent .message-bubble {
-            background-color: #28a745;
+            background-color: #007bff;
             color: white;
         }
         
@@ -221,31 +220,83 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
             background-color: #28a745;
         }
         
-        .user-info {
-            font-size: 0.875rem;
+        .typing-indicator {
+            font-style: italic;
             color: #6c757d;
+            font-size: 0.875rem;
         }
     </style>
 </head>
 <body>
-    <?php include 'includes/header.php'; ?>
-    
-    <div class="container-fluid">
-        <div class="row">
-            <?php include 'includes/sidebar.php'; ?>
-            
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
-                <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-                    <h1 class="h2">
-                        <i class="fas fa-comments"></i> Admin Messages
-                    </h1>
-                    <div class="btn-toolbar mb-2 mb-md-0">
-                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newConversationModal">
-                            <i class="fas fa-plus"></i> New Conversation
-                        </button>
-                    </div>
-                </div>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="index.php">
+                <img src="assets/images/MG Logo.jpg" alt="MG Transport Services" class="me-2">
+                <span class="d-none d-md-inline">MG Transport Services</span>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="index.php">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="vehicles.php">Vehicles</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="booking.php">Book Now</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="about.php">About</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="contact.php">Contact</a>
+                    </li>
+                    <?php if (isset($_SESSION['user_id'])): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="tracking.php">Track Vehicle</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="messages.php">Messages</a>
+                    </li>
+                    <?php endif; ?>
+                </ul>
+                <ul class="navbar-nav">
+                    <?php if (isset($_SESSION['user_id'])): ?>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-user"></i> <?php echo htmlspecialchars($_SESSION['username'] ?? 'User'); ?>
+                            </a>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="dashboard.php">Dashboard</a></li>
+                                <li><a class="dropdown-item" href="my-bookings.php">My Bookings</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="logout.php">Logout</a></li>
+                            </ul>
+                        </li>
+                    <?php else: ?>
+                        <li class="nav-item">
+                            <a class="nav-link" href="login.php">Login</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="register.php">Register</a>
+                        </li>
+                    <?php endif; ?>
+                </ul>
+            </div>
+        </div>
+    </nav>
 
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <h1 class="mb-4">
+                    <i class="fas fa-comments"></i> Messages
+                </h1>
+                
                 <?php if (isset($success_message)): ?>
                 <div class="alert alert-success alert-dismissible fade show" role="alert">
                     <?php echo $success_message; ?>
@@ -263,10 +314,13 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                 <div class="row">
                     <div class="col-md-4">
                         <div class="card">
-                            <div class="card-header">
+                            <div class="card-header d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0">
                                     <i class="fas fa-list"></i> Conversations
                                 </h5>
+                                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#newConversationModal">
+                                    <i class="fas fa-plus"></i> New
+                                </button>
                             </div>
                             <div class="card-body p-0">
                                 <div class="conversation-list">
@@ -274,14 +328,14 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                                     <div class="text-center text-muted p-4">
                                         <i class="fas fa-comments fa-2x mb-3"></i>
                                         <p>No conversations yet.</p>
-                                        <p>Users will appear here when they start conversations.</p>
+                                        <p>Start a conversation with an admin!</p>
                                     </div>
                                     <?php else: ?>
                                     <?php foreach ($conversations as $conv): ?>
                                     <div class="conversation-item <?php echo ($selected_user_id == $conv['other_user_id']) ? 'active' : ''; ?>"
                                          onclick="loadConversation(<?php echo $conv['other_user_id']; ?>)">
                                         <div class="d-flex align-items-center">
-                                            <div class="user-avatar me-3">
+                                            <div class="user-avatar <?php echo ($conv['other_role'] === 'admin') ? 'admin-avatar' : ''; ?> me-3">
                                                 <?php echo strtoupper(substr($conv['other_username'], 0, 1)); ?>
                                             </div>
                                             <div class="flex-grow-1">
@@ -290,9 +344,6 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                                                     <?php if ($conv['unread_count'] > 0): ?>
                                                     <span class="unread-badge"><?php echo $conv['unread_count']; ?></span>
                                                     <?php endif; ?>
-                                                </div>
-                                                <div class="user-info">
-                                                    <small><?php echo htmlspecialchars($conv['other_email']); ?></small>
                                                 </div>
                                                 <small class="text-muted">
                                                     <?php echo htmlspecialchars(substr($conv['last_message'], 0, 50)); ?>
@@ -331,22 +382,19 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                                                 }
                                                 echo htmlspecialchars($selected_user['other_username'] ?? 'Unknown User');
                                                 ?>
-                                                <small class="text-muted ms-2">
-                                                    <?php echo htmlspecialchars($selected_user['other_email'] ?? ''); ?>
-                                                </small>
                                             </h6>
                                         </div>
                                         
                                         <div class="messages-body" id="messagesBody">
                                             <?php foreach ($messages as $message): ?>
-                                            <div class="message <?php echo ($message['sender_id'] == $admin_id) ? 'sent' : 'received'; ?>">
+                                            <div class="message <?php echo ($message['sender_id'] == $user_id) ? 'sent' : 'received'; ?>">
                                                 <div class="message-bubble">
                                                     <?php echo nl2br(htmlspecialchars($message['message'])); ?>
                                                 </div>
                                                 <div class="message-time">
                                                     <?php echo date('g:i A', strtotime($message['created_at'])); ?>
-                                                    <?php if ($message['sender_id'] == $admin_id): ?>
-                                                    <i class="fas fa-check <?php echo $message['is_read'] ? 'text-success' : 'text-muted'; ?>"></i>
+                                                    <?php if ($message['sender_id'] == $user_id): ?>
+                                                    <i class="fas fa-check <?php echo $message['is_read'] ? 'text-primary' : 'text-muted'; ?>"></i>
                                                     <?php endif; ?>
                                                 </div>
                                             </div>
@@ -358,7 +406,7 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                                             <input type="hidden" name="recipient_id" value="<?php echo $selected_user_id; ?>">
                                             <div class="input-group">
                                                 <input type="text" class="form-control" name="message" placeholder="Type your message..." required>
-                                                <button class="btn btn-success" type="submit">
+                                                <button class="btn btn-primary" type="submit">
                                                     <i class="fas fa-paper-plane"></i>
                                                 </button>
                                             </div>
@@ -368,7 +416,7 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                                             <div class="text-center text-muted">
                                                 <i class="fas fa-comments fa-3x mb-3"></i>
                                                 <h5>Select a conversation</h5>
-                                                <p>Choose a conversation from the list to respond to user messages.</p>
+                                                <p>Choose a conversation from the list to start messaging.</p>
                                             </div>
                                         </div>
                                         <?php endif; ?>
@@ -378,7 +426,7 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                         </div>
                     </div>
                 </div>
-            </main>
+            </div>
         </div>
     </div>
 
@@ -391,17 +439,17 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <p>Select a user to start a conversation:</p>
+                    <p>Select an admin to start a conversation:</p>
                     <div class="list-group">
-                        <?php foreach ($users as $user): ?>
-                        <a href="?user_id=<?php echo $user['id']; ?>" class="list-group-item list-group-item-action">
+                        <?php foreach ($admins as $admin): ?>
+                        <a href="?user_id=<?php echo $admin['id']; ?>" class="list-group-item list-group-item-action">
                             <div class="d-flex align-items-center">
-                                <div class="user-avatar me-3">
-                                    <?php echo strtoupper(substr($user['username'], 0, 1)); ?>
+                                <div class="user-avatar admin-avatar me-3">
+                                    <?php echo strtoupper(substr($admin['username'], 0, 1)); ?>
                                 </div>
                                 <div>
-                                    <h6 class="mb-0"><?php echo htmlspecialchars($user['username']); ?></h6>
-                                    <small class="text-muted"><?php echo htmlspecialchars($user['email']); ?></small>
+                                    <h6 class="mb-0"><?php echo htmlspecialchars($admin['username']); ?></h6>
+                                    <small class="text-muted">Admin</small>
                                 </div>
                             </div>
                         </a>
@@ -412,7 +460,7 @@ $users = mysqli_fetch_all($users_result, MYSQLI_ASSOC);
         </div>
     </div>
 
-    <?php include 'admin_footer.php'; ?>
+    <?php include 'includes/footer.php'; ?>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         function loadConversation(userId) {

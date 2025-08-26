@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can read and write their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Vehicles are readable by all authenticated users
+    match /vehicles/{vehicleId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Bookings: users can read/write their own, admins can read/write all
+    match /bookings/{bookingId} {
+      allow read, write: if request.auth != null && 
+        (request.auth.uid == resource.data.user_id || request.auth.token.role == 'admin');
+    }
+    
+    // Vehicle agreements: users can read/write their own, admins can read/write all
+    match /vehicle_agreements/{agreementId} {
+      allow read, write: if request.auth != null && 
+        (request.auth.uid == resource.data.user_id || request.auth.token.role == 'admin');
+    }
+    
+    // Payments: users can read their own, admins can read/write all
+    match /payments/{paymentId} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == resource.data.user_id || request.auth.token.role == 'admin');
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Notifications: users can read/write their own
+    match /notifications/{notificationId} {
+      allow read, write: if request.auth != null &&
+        request.auth.uid == resource.data.user_id;
+    }
+    
+    // System settings: only admins can read/write
+    match /system_settings/{settingId} {
+      allow read, write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "mg-transport-firebase",
+  "version": "1.0.0",
+  "description": "MG Transport Services - Firebase Hosted Version",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'No build step required for static site'",
+    "deploy": "firebase deploy",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "deploy:firestore": "firebase deploy --only firestore",
+    "deploy:storage": "firebase deploy --only storage",
+    "serve": "firebase serve",
+    "setup": "firebase init",
+    "login": "firebase login",
+    "logout": "firebase logout",
+    "use": "firebase use",
+    "projects:list": "firebase projects:list"
+  },
+  "keywords": [
+    "transport",
+    "vehicle-rental",
+    "firebase",
+    "hosting",
+    "firestore"
+  ],
+  "author": "MG Transport Services",
+  "license": "MIT",
+  "devDependencies": {
+    "firebase-tools": "^12.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/mg-transport-firebase.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/mg-transport-firebase/issues"
+  },
+  "homepage": "https://github.com/your-username/mg-transport-firebase#readme"
+}
